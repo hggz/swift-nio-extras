@@ -12,7 +12,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-import CNIOLinux
 import Dispatch
 import NIOCore
 
@@ -22,11 +21,24 @@ import Darwin
 import Musl
 #elseif canImport(Android)
 import Android
-#else
+#elseif canImport(Glibc)
+import CNIOLinux
 import Glibc
+#elseif canImport(WinSDK)
+import WinSDK
 #endif
 
+#if os(Windows)
+// NIOExtras.WritePCAPHandler's `SynchronizedFileSink` uses POSIX `write(2)`,
+// which is not portable to Windows. Hummingbird does not exercise this code
+// path. Provide a fatal stub so the module compiles; if any consumer ever
+// invokes it on Windows we want a loud failure, not silent corruption.
+nonisolated(unsafe) let sysWrite: @Sendable (CInt, UnsafeRawPointer?, Int) -> Int = { _, _, _ in
+    fatalError("NIOExtras.WritePCAPHandler is not supported on Windows")
+}
+#else
 let sysWrite = write
+#endif
 
 struct TCPHeader {
     struct Flags: OptionSet {
@@ -110,8 +122,17 @@ struct PCAPRecordHeader {
     }
 
     init(payloadLength: Int, addresses: AddressTuple, tcp: TCPHeader) {
+#if os(Windows)
+        // Windows UCRT has no gettimeofday(2). Use _ftime64_s for sub-second
+        // resolution and convert to timeval. Windows' `timeval.tv_sec` and
+        // `tv_usec` are `long` (Int32 on LLP64).
+        var ft = __timeb64()
+        _ftime64_s(&ft)
+        var tv = timeval(tv_sec: Int32(ft.time), tv_usec: Int32(ft.millitm) * 1000)
+#else
         var tv = timeval()
         gettimeofday(&tv, nil)
+#endif
         self = .init(payloadLength: payloadLength, addresses: addresses, time: tv, tcp: tcp)
     }
 }
@@ -614,8 +635,15 @@ extension ByteBuffer {
             self.writeInteger(.max, as: UInt8.self)  // TTL, `.max` as we don't care about the TTL
             self.writeInteger(6, as: UInt8.self)  // TCP
             self.writeInteger(0, as: UInt16.self)  // checksum
+#if os(Windows)
+            // Windows' IN_ADDR is a union; the s_addr member lives at
+            // `S_un.S_addr` rather than `s_addr`.
+            self.writeInteger(la.address.sin_addr.S_un.S_addr, endianness: .host, as: UInt32.self)
+            self.writeInteger(ra.address.sin_addr.S_un.S_addr, endianness: .host, as: UInt32.self)
+#else
             self.writeInteger(la.address.sin_addr.s_addr, endianness: .host, as: UInt32.self)
             self.writeInteger(ra.address.sin_addr.s_addr, endianness: .host, as: UInt32.self)
+#endif
         case .v6(let la, let ra):
             let ipv6PayloadLength = tcpLength
             let recordLength = ipv6PayloadLength + 4 + 40  // IPv6 header length (+4 gives 32 bits for protocol id)
@@ -724,6 +752,11 @@ extension NIOWritePCAPHandler {
             fileWritingMode: FileWritingMode = .createNewPCAPFile,
             errorHandler: @escaping (Swift.Error) -> Void
         ) throws -> SynchronizedFileSink {
+#if os(Windows)
+            // WritePCAPHandler depends on POSIX open/write semantics. Not
+            // ported to Windows; the rest of NIOExtras remains usable.
+            fatalError("NIOExtras.WritePCAPHandler.fileSinkWritingToFile is not supported on Windows")
+#else
             let oflag: CInt = fileWritingMode == FileWritingMode.createNewPCAPFile ? (O_TRUNC | O_CREAT) : O_APPEND
             let fd = try path.withCString { pathPtr -> CInt in
                 let fd = open(pathPtr, O_WRONLY | oflag, 0o600)
@@ -745,6 +778,7 @@ extension NIOWritePCAPHandler {
                 fileHandle: NIOFileHandle(_deprecatedTakingOwnershipOfDescriptor: fd),
                 errorHandler: errorHandler
             )
+#endif
         }
 
         private init(

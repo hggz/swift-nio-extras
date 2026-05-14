@@ -12,7 +12,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-import CNIOLinux
 import NIOCore
 
 #if canImport(Darwin)
@@ -21,8 +20,11 @@ import Darwin
 import Musl
 #elseif canImport(Android)
 import Android
-#else
+#elseif canImport(Glibc)
+import CNIOLinux
 import Glibc
+#elseif canImport(WinSDK)
+import WinSDK
 #endif
 
 // MARK: - ClientRequest

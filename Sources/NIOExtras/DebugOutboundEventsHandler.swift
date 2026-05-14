@@ -20,8 +20,10 @@ import Darwin
 @preconcurrency import Musl
 #elseif canImport(Android)
 @preconcurrency import Android
-#else
+#elseif canImport(Glibc)
 @preconcurrency import Glibc
+#elseif canImport(WinSDK)
+import WinSDK
 #endif
 
 /// ChannelOutboundHandler that prints all outbound events that pass through the pipeline by default,
@@ -171,7 +173,9 @@ public class DebugOutboundEventsHandler: ChannelOutboundHandler {
             message = "Triggering user outbound event: { \(event) }"
         }
         print(message + " in \(context.name)")
+#if !os(Windows)
         fflush(stdout)
+#endif
     }
 }
 

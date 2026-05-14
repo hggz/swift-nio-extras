@@ -19,8 +19,10 @@ import Darwin
 @preconcurrency import Musl
 #elseif canImport(Android)
 @preconcurrency import Android
-#else
+#elseif canImport(Glibc)
 @preconcurrency import Glibc
+#elseif canImport(WinSDK)
+import WinSDK
 #endif
 
 /// `ChannelInboundHandler` that prints all inbound events that pass through the pipeline by default,
@@ -175,7 +177,9 @@ public class DebugInboundEventsHandler: ChannelInboundHandler {
             message = "Channel caught error: \(error)"
         }
         print(message + " in \(context.name)")
+#if !os(Windows)
         fflush(stdout)
+#endif
     }
 }
 
